@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from functools import wraps
 from pathlib import Path
 from typing import Any
@@ -17,7 +18,7 @@ def create_app(database: WarehouseDB | None = None) -> Flask:
         template_folder=str(base_dir / "templates"),
         static_folder=str(base_dir / "static"),
     )
-    app.config["SECRET_KEY"] = "warehouse-web-secret-key"
+    app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "warehouse-web-secret-key")
     db = database or WarehouseDB()
 
     if not db.has_users():
@@ -53,6 +54,11 @@ def create_app(database: WarehouseDB | None = None) -> Flask:
             return wrapped
 
         return decorator
+
+    def find_product(product_id: str | None):
+        if not product_id or not product_id.isdigit():
+            return None
+        return db.get_product(int(product_id))
 
     def user_list() -> list[dict[str, str | int]]:
         return [
@@ -232,7 +238,11 @@ def create_app(database: WarehouseDB | None = None) -> Flask:
                     action=f"/products/{product_id}/edit",
                     page_title="Edit Product",
                 )
-            db.save_product(normalized, product_id)
+            try:
+                db.save_product(normalized, product_id)
+            except LookupError as error:
+                flash(str(error), "error")
+                return redirect(url_for("products"))
             flash("Product updated.", "success")
             return redirect(url_for("products"))
         return render_template(
@@ -263,7 +273,11 @@ def create_app(database: WarehouseDB | None = None) -> Flask:
         if product is None:
             flash("That product no longer exists.", "error")
             return redirect(url_for("products"))
-        db.delete_product(product_id)
+        try:
+            db.delete_product(product_id)
+        except LookupError as error:
+            flash(str(error), "error")
+            return redirect(url_for("products"))
         flash(f"Deleted product {product.sku}.", "success")
         return redirect(url_for("products"))
 
@@ -274,7 +288,7 @@ def create_app(database: WarehouseDB | None = None) -> Flask:
             product_id = request.form.get("product_id")
             quantity = request.form.get("quantity", "")
             note = request.form.get("note", "")
-            product = db.get_product(int(product_id)) if product_id else None
+            product = find_product(product_id)
             if product is None:
                 flash("Choose a product from the list.", "error")
                 return redirect(url_for("stock_in"))
@@ -293,8 +307,12 @@ def create_app(database: WarehouseDB | None = None) -> Flask:
                     errors=errors,
                     page_title="Stock In",
                 )
-            db.record_movement(product.id, "IN", valid_quantity, note)
-            flash(f"Stock movement saved. New balance: {product.quantity + valid_quantity}.", "success")
+            try:
+                balance = db.record_movement(product.id, "IN", valid_quantity, note)
+            except (ValueError, LookupError) as error:
+                flash(str(error), "error")
+                return redirect(url_for("stock_in"))
+            flash(f"Stock movement saved. New balance: {balance}.", "success")
             return redirect(url_for("stock_in"))
         return render_template(
             "stock_movement.html",
@@ -316,7 +334,7 @@ def create_app(database: WarehouseDB | None = None) -> Flask:
             product_id = request.form.get("product_id")
             quantity = request.form.get("quantity", "")
             note = request.form.get("note", "")
-            product = db.get_product(int(product_id)) if product_id else None
+            product = find_product(product_id)
             if product is None:
                 flash("Choose a product from the list.", "error")
                 return redirect(url_for("stock_out"))
@@ -335,8 +353,12 @@ def create_app(database: WarehouseDB | None = None) -> Flask:
                     errors=errors,
                     page_title="Stock Out",
                 )
-            db.record_movement(product.id, "OUT", valid_quantity, note)
-            flash(f"Stock movement saved. New balance: {product.quantity - valid_quantity}.", "success")
+            try:
+                balance = db.record_movement(product.id, "OUT", valid_quantity, note)
+            except (ValueError, LookupError) as error:
+                flash(str(error), "error")
+                return redirect(url_for("stock_out"))
+            flash(f"Stock movement saved. New balance: {balance}.", "success")
             return redirect(url_for("stock_out"))
         return render_template(
             "stock_movement.html",
