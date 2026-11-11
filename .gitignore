@@ -1,0 +1,6 @@
+.venv/
+__pycache__/
+*.pyc
+warehouse.db
+.env*.local
+.vercel
